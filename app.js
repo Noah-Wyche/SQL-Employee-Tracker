@@ -84,34 +84,53 @@ function viewDepartments() {
 }
 
 function viewRoles() {
-  // Query the database to get all roles
-  connection.query('SELECT * FROM role', (err, res) => {
-    if (err) {
-      console.error('Error viewing roles: ' + err.stack);
+  const query = `
+      SELECT r.id, r.title, r.salary, d.name AS department_name
+      FROM role r
+      JOIN department d ON r.department_id = d.id
+  `;
+  connection.query(query, (err, res) => {
+      if (err) {
+          console.error('Error viewing roles: ' + err.stack);
+          startApp();
+          return;
+      }
+      // Display the roles
+      console.table(res);
+      // Restart the application
       startApp();
-      return;
-    }
-    // Display the roles
-    console.table(res);
-    // Restart the application
-    startApp();
   });
 }
 
+
 function viewEmployees() {
-  // Query the database to get all employees
-  connection.query('SELECT * FROM employee', (err, res) => {
-    if (err) {
-      console.error('Error viewing employees: ' + err.stack);
+  const query = `
+      SELECT 
+          e.id,
+          e.first_name,
+          e.last_name,
+          r.title AS job_title,
+          d.name AS department,
+          r.salary,
+          CONCAT(m.first_name, ' ', m.last_name) AS manager
+      FROM employee e
+      LEFT JOIN role r ON e.role_id = r.id
+      LEFT JOIN department d ON r.department_id = d.id
+      LEFT JOIN employee m ON e.manager_id = m.id
+  `;
+  connection.query(query, (err, res) => {
+      if (err) {
+          console.error('Error viewing employees: ' + err.stack);
+          startApp();
+          return;
+      }
+      // Display the employees
+      console.table(res);
+      // Restart the application
       startApp();
-      return;
-    }
-    // Display the employees
-    console.table(res);
-    // Restart the application
-    startApp();
   });
 }
+
 
 function addDepartment() {
   inquirer.prompt({
@@ -130,20 +149,44 @@ function addDepartment() {
 }
 
 function addRole() {
-  inquirer.prompt({
-    name: 'roleName',
-    type: 'input',
-    message: 'Enter the name of the role:'
-  }).then(answer => {
-    // Insert the role into the database
-    connection.query('INSERT INTO role (title) VALUES (?)', [answer.roleName], (err, res) => {
-      if (err) throw err;
-      console.log('Role added successfully!');
-      // Restart the application
-      startApp();
+  // Query the database to get the list of departments
+  connection.query('SELECT * FROM department', (err, departments) => {
+    if (err) throw err;
+
+    inquirer.prompt([
+      {
+        name: 'roleName',
+        type: 'input',
+        message: 'Enter the name of the role:'
+      },
+      {
+        name: 'salary',
+        type: 'input',
+        message: 'Enter the salary for this role:'
+      },
+      {
+        name: 'department',
+        type: 'list',
+        message: 'Select the department for this role:',
+        choices: departments.map(department => department.name)
+      }
+    ]).then(answer => {
+      // Find the department ID based on the selected department name
+      const selectedDepartment = departments.find(department => department.name === answer.department);
+
+      // Insert the role into the database with the selected department ID
+      connection.query('INSERT INTO role (title, salary, department_id) VALUES (?, ?, ?)', 
+        [answer.roleName, answer.salary, selectedDepartment.id], 
+        (err, res) => {
+          if (err) throw err;
+          console.log('Role added successfully!');
+          // Restart the application
+          startApp();
+      });
     });
   });
 }
+
 
 function addEmployee() {
   // Query the database to get the list of roles
@@ -153,6 +196,13 @@ function addEmployee() {
     // Query the database to get the list of managers
     connection.query('SELECT * FROM employee', (err, employees) => {
       if (err) throw err;
+
+      // Add an option for no manager
+      const managerChoices = employees.map(employee => ({
+        name: `${employee.first_name} ${employee.last_name}`,
+        value: employee.id
+      }));
+      managerChoices.push({ name: 'None', value: null });
 
       inquirer.prompt([
         {
@@ -178,10 +228,7 @@ function addEmployee() {
           name: 'manager',
           type: 'list',
           message: 'Select the employee\'s manager:',
-          choices: employees.map(employee => ({
-            name: `${employee.first_name} ${employee.last_name}`,
-            value: employee.id
-          }))
+          choices: managerChoices
         }
       ]).then(answers => {
         // Insert the employee into the database
@@ -198,58 +245,118 @@ function addEmployee() {
   });
 }
 
+
 function updateEmployeeRole() {
-  // Query the database to get the list of departments
-  connection.query('SELECT * FROM department', (err, departments) => {
-    if (err) throw err;
+  let roles;
+  let employees;
 
-    inquirer.prompt({
-      name: 'department',
-      type: 'list',
-      message: 'Select a department:',
-      choices: departments.map(department => department.name)
-    }).then(answer => {
-      // Query the database to get the list of employees in the selected department
-      connection.query('SELECT * FROM employee JOIN role ON employee.role_id = role.id WHERE role.department_id IN (SELECT id FROM department WHERE name = ?)', 
-        [answer.department], 
-        (err, employees) => {
-          if (err) throw err;
-
-          inquirer.prompt({
-            name: 'employee',
-            type: 'list',
-            message: 'Select the employee you want to update:',
-            choices: employees.map(employee => ({
-              name: `${employee.first_name} ${employee.last_name}`,
-              value: employee.id
-            }))
-          }).then(employeeAnswer => {
-            // Query the database to get the list of roles
-            connection.query('SELECT * FROM role', (err, roles) => {
-              if (err) throw err;
-
-              inquirer.prompt({
-                name: 'role',
-                type: 'list',
-                message: 'Select the employee\'s new role:',
-                choices: roles.map(role => ({
-                  name: role.title,
-                  value: role.id
-                }))
-              }).then(roleAnswer => {
-                // Update the employee's role in the database
-                connection.query('UPDATE employee SET role_id = ? WHERE id = ?', 
-                  [roleAnswer.role, employeeAnswer.employee], 
-                  (err, res) => {
-                    if (err) throw err;
-                    console.log('Employee role updated successfully!');
-                    // Restart the application
-                    startApp();
-                  });
-              });
-            });
-          });
+  // Function to fetch roles from the database
+  function fetchRoles() {
+    return new Promise((resolve, reject) => {
+      connection.query('SELECT * FROM role', (err, res) => {
+        if (err) {
+          reject(err);
+        } else {
+          roles = res;
+          resolve();
+        }
       });
     });
-  });
+  }
+
+  // Function to fetch employees from the database
+  function fetchEmployees() {
+    return new Promise((resolve, reject) => {
+      connection.query('SELECT * FROM employee', (err, res) => {
+        if (err) {
+          reject(err);
+        } else {
+          employees = res;
+          resolve();
+        }
+      });
+    });
+  }
+
+  // Fetch roles data
+  fetchRoles()
+    .then(() => {
+      // Fetch employees data
+      return fetchEmployees();
+    })
+    .then(() => {
+      // Prompt the user to select an employee
+      inquirer.prompt({
+        name: 'employee',
+        type: 'list',
+        message: 'Select the employee you want to update:',
+        choices: employees.map(employee => ({
+          name: `${employee.first_name} ${employee.last_name}`,
+          value: employee.id
+        }))
+      }).then(employeeAnswer => {
+        // Prompt the user to choose what to update
+        inquirer.prompt({
+          name: 'updateChoice',
+          type: 'list',
+          message: 'What would you like to update?',
+          choices: ['Role', 'Manager']
+        }).then(choiceAnswer => {
+          if (choiceAnswer.updateChoice === 'Role') {
+            // Prompt the user to select a new role for the employee
+            inquirer.prompt({
+              name: 'role',
+              type: 'list',
+              message: 'Select the employee\'s new role:',
+              choices: roles.map(role => ({
+                name: role.title,
+                value: role.id
+              }))
+            }).then(roleAnswer => {
+              // Update the employee's role in the database
+              connection.query('UPDATE employee SET role_id = ? WHERE id = ?', 
+                [roleAnswer.role, employeeAnswer.employee], 
+                (err, res) => {
+                  if (err) {
+                    console.error('Error updating employee role: ' + err.stack);
+                  } else {
+                    console.log('Employee role updated successfully!');
+                  }
+                  // Restart the application
+                  startApp();
+                });
+            });
+          } else if (choiceAnswer.updateChoice === 'Manager') {
+            // Prompt the user to select a new manager for the employee
+            inquirer.prompt({
+              name: 'manager',
+              type: 'list',
+              message: 'Select the employee\'s new manager:',
+              choices: employees.map(employee => ({
+                name: `${employee.first_name} ${employee.last_name}`,
+                value: employee.id
+              }))
+            }).then(managerAnswer => {
+              // Update the employee's manager in the database
+              connection.query('UPDATE employee SET manager_id = ? WHERE id = ?', 
+                [managerAnswer.manager, employeeAnswer.employee], 
+                (err, res) => {
+                  if (err) {
+                    console.error('Error updating employee manager: ' + err.stack);
+                  } else {
+                    console.log('Employee manager updated successfully!');
+                  }
+                  // Restart the application
+                  startApp();
+                });
+            });
+          }
+        });
+      });
+    })
+    .catch(err => {
+      console.error('Error updating employee role/manager: ' + err.stack);
+      startApp(); // Restart the application
+    });
 }
+
